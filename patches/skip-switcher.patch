@@ -1,0 +1,20 @@
+--- a/src/windowtools_x11.cpp
++++ b/src/windowtools_x11.cpp
+@@ -687,13 +687,13 @@
+         "var ok = matches.length > 0;\n"
+         "if (%2 === \"hide\") {\n"
+         "  for (var j = 0; j < matches.length; j++) {\n"
+-        "    matches[j].skipTaskbar = true; matches[j].skipPager = true; matches[j].minimized = true;\n"
+-        "    if (!matches[j].minimized || !matches[j].skipTaskbar) ok = false;\n"
++        "    matches[j].skipTaskbar = true; matches[j].skipPager = true; matches[j].skipSwitcher = true; matches[j].minimized = true;\n"
++        "    if (!matches[j].minimized || !matches[j].skipTaskbar || !matches[j].skipSwitcher) ok = false;\n"
+         "  }\n"
+         "} else if (%2 === \"show\") {\n"
+         "  for (var k = 0; k < matches.length; k++) {\n"
+-        "    matches[k].skipTaskbar = false; matches[k].skipPager = false; matches[k].minimized = false;\n"
+-        "    if (matches[k].minimized || matches[k].skipTaskbar) ok = false;\n"
++        "    matches[k].skipTaskbar = false; matches[k].skipPager = false; matches[k].skipSwitcher = false; matches[k].minimized = false;\n"
++        "    if (matches[k].minimized || matches[k].skipTaskbar || matches[k].skipSwitcher) ok = false;\n"
+         "  }\n"
+         "  if (matches.length) workspace.activeWindow = matches[0];\n"
+         "  if (matches.length && !matches[0].active) ok = false;\n"
