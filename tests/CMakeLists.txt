@@ -7,6 +7,10 @@ if (NOT GTEST_FOUND)
 endif()
 enable_testing()
 
+# The GTest package on some distributions (e.g. Arch Linux) exposes GMock
+# under the GTest:: namespace; alias the expected GMock:: target names.
+include(${CMAKE_CURRENT_SOURCE_DIR}/GMockAliases.cmake)
+
 set(TESTS
         src/test_morkparser.cpp
         src/test_utils.cpp

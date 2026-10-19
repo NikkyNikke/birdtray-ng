@@ -1,0 +1,7 @@
+find_package(GTest CONFIG REQUIRED)
+if(TARGET GTest::gmock AND NOT TARGET GMock::GMock)
+    add_library(GMock::GMock ALIAS GTest::gmock)
+endif()
+if(TARGET GTest::gmock_main AND NOT TARGET GMock::Main)
+    add_library(GMock::Main ALIAS GTest::gmock_main)
+endif()
