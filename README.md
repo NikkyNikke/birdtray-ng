@@ -1,7 +1,7 @@
 # Birdtray NG — reliable close-to-tray for Thunderbird on KDE Plasma Wayland
 
-[![Licence](https://img.shields.io/github/license/NikkyNikke/birdtray-wayland)](LICENSE.txt)
-[![Latest release](https://img.shields.io/github/v/release/NikkyNikke/birdtray-wayland)](https://github.com/NikkyNikke/birdtray-wayland/releases)
+[![Licence](https://img.shields.io/github/license/NikkyNikke/birdtray-ng)](LICENSE.txt)
+[![Latest release](https://img.shields.io/github/v/release/NikkyNikke/birdtray-ng)](https://github.com/NikkyNikke/birdtray-ng/releases)
 ![Thunderbird — declared 128.0–158.\*, tested 158.0.1](https://img.shields.io/badge/thunderbird-declared_128.0%E2%80%93158.%2A_%C2%B7_tested_158.0.1-informational)
 ![KDE Plasma on Wayland (KWin)](https://img.shields.io/badge/desktop-KDE_Plasma_on_Wayland_%28KWin%29-informational)
 
@@ -52,7 +52,7 @@ preserved in full in [`NOTICE.md`](NOTICE.md).
    see [Build](#build-the-helper).)
 
 2. **Add-on:** install the published XPI from the
-   [latest release](https://github.com/NikkyNikke/birdtray-wayland/releases/latest) via
+   [latest release](https://github.com/NikkyNikke/birdtray-ng/releases/latest) via
    Thunderbird's Add-ons Manager → ⚙ → *Install Add-on From File…*
    ([The Thunderbird add-on](#the-thunderbird-add-on)).
 
