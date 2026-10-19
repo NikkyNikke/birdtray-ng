@@ -23,10 +23,17 @@ All helper changes are recorded as reviewable patch files under
 
 | Change | Why | Patch |
 | --- | --- | --- |
-| **Native messaging host mode** in the helper + per-user control socket | lets a Thunderbird add-on talk to the tray helper | `patches/prototype.patch`, `patches/final.patch` |
-| **One-shot quit authorization** | an ✕ click may only *exit* Thunderbird when a human explicitly chose *Quit Thunderbird* from the tray menu; this removed upstream birdtray's stale 15-second "allow-close" window as the only gate | `patches/final.patch`, `patches/quit-close-authorization.patch` |
+| **Native messaging host mode** in the helper + per-user control socket | lets a Thunderbird add-on talk to the tray helper | `patches/helper-delta.patch` |
+| **One-shot quit authorization** | an ✕ click may only *exit* Thunderbird when a human explicitly chose *Quit Thunderbird* from the tray menu; this removed upstream birdtray's stale 15-second "allow-close" window as the only gate | `patches/helper-delta.patch` |
 | **`skipSwitcher` added to the tray-hide script** | a tray-hidden window also disappears from **Alt+Tab** and from the **Meta+W** overview, not just from the taskbar; restore clears all four flags | `patches/skip-switcher.patch` |
-| Helper auto-start (on demand, one-shot spawn) | Thunderbird starting without the helper can request it over native messaging; the helper then exists for tray interactions | `patches/final.patch` |
+| Helper auto-start (on demand, one-shot spawn) | Thunderbird starting without the helper can request it over native messaging; the helper then exists for tray interactions | `patches/helper-delta.patch` |
+
+The two patch files are derived directly from the commits and are the
+complete reviewable delta: `patches/helper-delta.patch` is the full helper
+change against upstream `master` (revision `2ac2016`), and
+`patches/skip-switcher.patch` is the incremental delta applying on top of
+it. Applying both, in that order, to a pristine upstream checkout
+reproduces the helper code committed here.
 | **Thunderbird add-on** in `extension/` | the ✕ click needs to be intercepted inside Thunderbird — done by forking Dirk Steinmetz's maintained *Minimize on Close* add-on | see [The Thunderbird add-on](#the-thunderbird-add-on) |
 | Deployment kit in `deployment/` + `install.sh` / `uninstall.sh` | reproducible per-user install with `$HOME` templates | n/a (new files) |
 | New unit tests (14 in `ctest`) | protocol, authorization and window-state logic are testable without a GUI | `tests/` |
