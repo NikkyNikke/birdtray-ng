@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Birdtray
+Comment=Thunderbird system tray helper
+Exec=@HOME@/.local/opt/birdtray-wayland/launch-birdtray
+TryExec=@HOME@/.local/opt/birdtray-wayland/launch-birdtray
+Terminal=false
+OnlyShowIn=KDE;
+X-GNOME-Autostart-enabled=true

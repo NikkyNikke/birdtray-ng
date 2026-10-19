@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+
+exec @HOME@/.local/opt/birdtray-wayland/launch-birdtray --native-messaging-host

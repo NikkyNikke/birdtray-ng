@@ -1,0 +1,9 @@
+{
+  "name": "com.ulduzsoft.birdtray",
+  "description": "Per-user Birdtray native messaging host",
+  "path": "@HOME@/.local/opt/birdtray-wayland/native-messaging-host",
+  "type": "stdio",
+  "allowed_extensions": [
+    "birdtray-close@nikky.st"
+  ]
+}
