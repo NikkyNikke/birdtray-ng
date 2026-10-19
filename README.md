@@ -131,9 +131,12 @@ GTest/GMock for the test suite.
 ## Build the helper
 
 ```sh
-cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_WITH_TESTS=ON
 cmake --build build
 ```
+
+(The helper itself builds fine without `-DBUILD_WITH_TESTS=ON`; the flag
+adds the GTest/GMock unit-test targets and needs system GTest.)
 
 Sanity-check the result:
 
