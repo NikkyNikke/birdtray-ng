@@ -1,127 +1,232 @@
-# Birdtray — Wayland / Flatpak fork
+# Birdtray — close-to-tray for Thunderbird on KDE Plasma Wayland
 
-> **This is a personal fork of [gyunaev/birdtray](https://github.com/gyunaev/birdtray) with patches to make hide/show work on KDE Plasma Wayland and with Flatpak Thunderbird.**
-> The upstream project targets X11. These changes are local and have not been submitted upstream.
-> See the [Wayland / Flatpak Thunderbird](#wayland--flatpak-thunderbird) section below for what was changed and why.
+> **This is a personal fork of [stark1tty/birdtray-wayland](https://github.com/stark1tty/birdtray-wayland)**,
+> which is itself a fork of [gyunaev/birdtray](https://github.com/gyunaev/birdtray).
+> This fork targets a **natively installed Thunderbird (128–158) on KDE Plasma Wayland**
+> and adds a *real* close-to-tray experience: clicking the message window's ✕ hides
+> it to the tray instead of exiting Thunderbird — with the tray icon bringing it back —
+> while the natural ways of quitting Thunderbird keep working.
+>
+> The upstream project targets X11 (and, in stark1tty's fork, Flatpak Thunderbird on
+> Wayland). See [What this fork changes](#what-this-fork-changes) for exactly what was
+> added on top, and [Known limitations](#known-limitations) for what has *not* been
+> demonstrated.
 
-# Birdtray is a system tray new mail notification for Thunderbird, which does not require extensions. [![Build](https://github.com/gyunaev/birdtray/actions/workflows/main.yml/badge.svg)](https://github.com/gyunaev/birdtray/actions/workflows/main.yml)
+Birdtray upstream: *a system tray new mail notification for Thunderbird, which does
+not require extensions.*
 
-Birdtray is a free system tray notification for new mail for Thunderbird. It supports Linux and Windows (credit for adding and maintaining Windows support goes to @Abestanis). Patches to support other platforms are welcome.
+## What this fork changes
 
-## Features
+All helper changes are recorded as reviewable patch files under
+[`patches/`](patches/) and as a short stack of commits on top of upstream
+`master` (revision `2ac2016`, 2026-04-15):
 
-- Shows the unread email counter in the Thunderbird system tray icon;
+| Change | Why | Patch |
+| --- | --- | --- |
+| **Native messaging host mode** in the helper + per-user control socket | lets a Thunderbird add-on talk to the tray helper | `patches/prototype.patch`, `patches/final.patch` |
+| **One-shot quit authorization** | an ✕ click may only *exit* Thunderbird when a human explicitly chose *Quit Thunderbird* from the tray menu; this removed upstream birdtray's stale 15-second "allow-close" window as the only gate | `patches/final.patch`, `patches/quit-close-authorization.patch` |
+| **`skipSwitcher` added to the tray-hide script** | a tray-hidden window also disappears from **Alt+Tab** and from the **Meta+W** overview, not just from the taskbar; restore clears all four flags | `patches/skip-switcher.patch` |
+| Helper auto-start (on demand, one-shot spawn) | Thunderbird starting without the helper can request it over native messaging; the helper then exists for tray interactions | `patches/final.patch` |
+| **Thunderbird add-on** in `extension/` | the ✕ click needs to be intercepted inside Thunderbird — done by forking Dirk Steinmetz's maintained *Minimize on Close* add-on | see [The Thunderbird add-on](#the-thunderbird-add-on) |
+| Deployment kit in `deployment/` + `install.sh` / `uninstall.sh` | reproducible per-user install with `$HOME` templates | n/a (new files) |
+| New unit tests (14 in `ctest`) | protocol, authorization and window-state logic are testable without a GUI | `tests/` |
 
-- Optionally can animate the Thunderbird system tray icon if new mail is received;
+## How it works (plain English)
 
-- You can snooze new mail notifications for a specific time period;
+1. The **add-on** locks Thunderbird's main window so its ✕ cannot close it, and
+   forwards the click to the **helper** over native messaging.
+2. The helper asks **KWin** (via its scripting interface) to hide the window with
+   *four* flags at once: `minimized`, `skipTaskbar`, `skipPager` and `skipSwitcher`.
+   That is why a hidden Thunderbird is absent from the taskbar, Alt+Tab *and* the
+   Meta+W overview. The helper replies `hidden` to the add-on.
+3. Clicking the tray icon (or choosing *Show Thunderbird*) asks KWin to clear all
+   four flags — the window reappears exactly as it was.
+4. **Quit Thunderbird** in the tray menu grants a one-shot close authorization and
+   closes the window; the add-on asks the helper again, gets `allow-close` this
+   time, unlocks the window and lets Thunderbird exit for real.
+5. **Quit Birdtray** in the tray menu first restores a hidden Thunderbird (it
+   refuses to quit if the restore fails, so the window can never be lost), then
+   exits the helper.
+6. Clicking ✕ when *no* helper answers (e.g. the helper was never started) falls
+   back to the original *Minimize on Close* behaviour: the window minimizes to the
+   taskbar instead of exiting Thunderbird. Thunderbird still survives; you can
+   restore it from the taskbar or tray.
 
-- Birdtray checks the unread e-mail status directly by reading the Thunderbird email mork database. This means it does not need any extensions, and thus is immune to any future extension API changes in Thunderbird;
+Two distinct quits, two different results — that separation is the point.
 
-- Starting from version 0.2 if you click on Birdtray icon, it can hide the Thunderbird window, and restore it. There is also context menu for that (this currently only works on Linux);
+## Components
 
-- You can configure which accounts you want to check for unread emails on;
+| Component | Path | Language | Licence |
+| --- | --- | --- | --- |
+| Tray helper (`birdtray`) | `src/` | C++ / Qt 6 | GPL-3.0-or-later |
+| Thunderbird add-on | `extension/` | JavaScript (WebExtension + experiment API) | MPL-2.0 |
+| Deployment templates & installers | `deployment/`, `install.sh`, `uninstall.sh` | POSIX shell | GPL-3.0-or-later |
+| Test suite | `tests/` | C++ (GTest/GMock) | GPL-3.0-or-later |
 
-- You can choose different font colors for different email accounts. This allows you, for example, to have blue unread count for personal emails, red unread count for work emails, and green unread count if both folders have unread mail.
+## Tested environment
 
-- Can launch Thunderbird when Birdtray starts, and terminate it when Birdtray quits (configurable).
+Everything below was **actually exercised live**, repeatedly:
 
-- You can choose the tray icon, or use Thunderbird original icon;
+* CachyOS (Arch Linux), KDE Plasma on **Wayland**, KWin compositor
+* Thunderbird **158.0.1**, natively installed (pacman), single profile
+* Birdtray helper built with gcc + Qt 6
+* The close → hide → tray-restore cycle, the minimize ⇄ taskbar behaviour,
+  both quit paths, Alt+Tab/Meta+W exclusion in both directions, helper
+  re-launch races, and a 14-test `ctest` suite.
 
-- Can monitor that Thunderbird is running, and indicate it if you accidentally closed it;
+If your setup differs (other distributions, other Wayland compositors, X11
+sessions, Flatpak/Snap Thunderbird, multiple profiles), treat it as
+**untested**: it may work, and patches are welcome, but nothing here claims
+compatibility beyond the tested matrix.
 
-- Has configurable "New Email" functionality, allowing pre-configured email templates.
+## Known limitations
 
+1. **Process detection by substring scan.** To answer "is Thunderbird running?",
+   the helper scans `/proc/*/cmdline` for the configured process name
+   (`advanced/tbprocessname`, default `thunderbird`). The match is a plain
+   substring, so *any* process whose command line contains that word (say, an
+   editor with a file named `thunderbird-notes.txt` open) can produce a false
+   positive. Consequence: helper features that depend on the answer may act
+   when Thunderbird is not actually running. Window-based actions (hide/show/
+   quit) are unaffected in practice because they additionally require a real
+   Thunderbird *window* found through KWin.
+2. **Cold-start race (once observed, not reproduced).** If the helper starts up
+   at the very moment Thunderbird is showing its first window, one ✕ click was
+   observed to fall back to a plain *taskbar* minimize instead of tray-hide.
+   Thunderbird was never at risk; a single tray click restored the window
+   normally. Diagnosed, understood (single-shot fallback, no retry), and
+   deliberately left unfixed until it ever recurs — a retry-around-hide fix is
+   designed but gated on a real reproduction.
+3. **KWin-specific.** Hiding/restoring uses KWin's DBus scripting interface
+   (`qdbus6`). On GNOME or other compositors this will not work; nobody has
+   tested it.
+4. **Native Thunderbird only (tested).** This fork's kit was built and tested
+   against a natively installed Thunderbird. Upstream stark1tty fork's Flatpak
+   support is untouched but untested here.
+5. **Unsigned add-on.** Mozilla does not sign community add-ons, and
+   Thunderbird ≥ 128 (like this release) does not verify XPI signatures for
+   sideloaded files — the add-on installs normally through the Add-ons Manager
+   *without* weakening `xpinstall` security preferences. See the add-on section.
+6. **No auto-update channel.** The XPI has no update URL; update by downloading
+   a new release manually.
+7. **Version range 128.0–158.\*.** Declared in the manifest; actually tested
+   only on 158.0.1.
 
-## Building
+## Dependencies
 
-To build Birdtray from source, you would need the following components:
+**Build:** CMake ≥ 3.5, a C++ compiler (gcc/clang), Qt 6 modules
+Core, Gui, Widgets, Network, DBus, Svg, and Qt6LinguistTools (`lrelease`).
+GTest/GMock for the test suite.
 
-- A C++ compiler
-- Cmake
-- Qt 6.2 or higher;
-- libX11-devel
+**Runtime:** KDE Plasma (a StatusNotifierItem-capable system tray + KWin),
+`qdbus6` (from `qt6-tools` on Arch), and for the add-on: Thunderbird 128–158.
 
-To build, please do the following:
+## Build the helper
 
-```shell script
-mkdir build
-cd build
-cmake -DCMAKE_BUILD_TYPE=Release ..
-cmake --build .
+```sh
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
 ```
 
-Launch the `./birdtray` executable from the build directory.
+Sanity-check the result:
 
-## Installation
+```sh
+ctest --test-dir build        # 14 tests
+```
 
-Run `cmake --build . --target install` to install Birdtray.
-On Unix systems, you can configure the install location by running
-`cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr ..` before the command above.
-On Windows, the command will build a graphical installer and execute it.
-It requires [NSIS](https://nsis.sourceforge.io/Main_Page) to be installed on your system.
-It is recommended for Windows users to use the
-[precompiled installers for the latest release](https://github.com/gyunaev/birdtray/releases/latest).
+## Install (per user, no root)
 
-## Usage
+```sh
+./install.sh --bindir build
+```
 
-Once started, Birdtray will show the Thunderbird icon in system tray.
+`install.sh` copies the helper to `~/.local/opt/birdtray-wayland/`, installs the
+launcher, the native messaging host wrapper, the host registration JSON and the
+KDE autostart entry — all from `$HOME`-templated files in `deployment/`. It
+prints the SHA-256 of everything it installs, refuses to silently replace an
+existing different helper (pass `--force` after quitting the old one), and never
+touches Thunderbird profiles or mail data.
 
-Right-click on this icon, and click Settings. Go to Monitoring tab ans select the Thunderbird MSF file for the mailbox you'd like to monitor. You can specify different notification colors for each mailbox. Birdtray will show the new email count using this color if only this folder has new mail. If more than one folder has new mail, the default color will be used.
+Uninstall is symmetric: `./uninstall.sh` (it refuses to run while a helper
+process is alive).
 
-Then select the font and default color (which will be used if more than one monitored folder has new mail).
+The launcher gives the helper its **own isolated XDG state** under
+`~/.local/share/birdtray-wayland/` (`config/`, `data/`, `cache/`) so its
+settings never collide with other applications'. Notable settings there
+(QSettings-style flat keys in `config/birdtray-config.json`):
 
-You can also enable birdtray to start Thunderbird when you start Birdtray, or enable show/hide Thunderbird when the system tray icon is clicked, in settings.
+* `common/startClosedThunderbird = true` — tray click launches Thunderbird when none is running
+* `common/hideWhenStartedManually = false` — a manually started Thunderbird stays visible
+* `advanced/tbprocessname = thunderbird` — see limitation 1
 
-Once you change settings, often you need to restart birdtray for the new settings to take effect.
+## The Thunderbird add-on
 
-### Configuration File Location
-*Birdtray configuration is stored on a per-user basis, where the location differs depending on environment, as follows:*
+`extension/` contains the add-on, and `artifacts/` a built XPI:
 
-#### Linux Package Installation
-`$HOME/.config/birdtray-config.json`
+`minimize-on-close-birdtray-wayland-158-2.0.3.2-public.xpi`
+(SHA-256 `69b580b05b3792477663b44b359e19efb7e8c714829b8945c99c49a99c8e2fec`;
+reproducible — `scripts/build_public_xpi.py` packs from `extension/` with fixed
+timestamps).
 
-#### Linux Flatpak Installation
-`$HOME/.var/app/com.ulduzsoft.Birdtray/config/ulduzsoft/birdtray-config.json`
+Install it via Thunderbird's **Add-ons Manager → ⚙ → Install Add-on From File…**
 
-#### Windows Installation
-`%LocalAppData%\ulduzsoft\birdtray\birdtray-config.json`
+* ID: `birdtray-close@nikky.st`, compatibility 128.0–158.\*
+* It is a fork of Dirk Steinmetz's *Minimize on Close*
+  ([upstream](https://github.com/rsjtdrjgfuzkfg/thunderbird-minimizeonclose),
+  `minimizeonclose@rsjtdrjgfuzkfg.com`, MPL-2.0) — see [`NOTICE.md`](NOTICE.md)
+  for the full provenance and the file-by-file delta. The author field credits
+  the original author; this fork's changes are MPL-2.0 as well, with per-file
+  modification notices.
+* **Unsigned, on purpose.** Community add-ons like this one are not signed by
+  Mozilla — a Thunderbird team member has stated plainly that Mozilla does not
+  sign add-ons. Thunderbird 158 does not verify sideloaded XPI signatures, so
+  the add-on installs normally; there is no need to disable signature
+  enforcement (`xpinstall.*` stays untouched), and no such workaround is
+  recommended by this project.
+* The add-on's diagnostic logging (`[BIRDTRAY-WAYLAND] …` lines) is kept in the
+  public build — it appears only in Thunderbird's developer-tools console and
+  has proven its worth whenever something needed investigating.
+* The experiment API (`ex_windows`) is what locks/unlocks the window; if you
+  audit the code, that is the part to read (`experiment.js`), plus the close
+  flow in `background.js`.
 
-## Troubleshooting
+## Native messaging and single instance
 
-If Birdtray shows the wrong number of unread messages, it can be caused by a corrupt mork file.
-This can often be fixed by using the `Repair` functionality in Thunderbird in the mail folder settings.
+* The host name `com.ulduzsoft.birdtray` maps (via
+  `~/.mozilla/native-messaging-hosts/com.ulduzsoft.birdtray.json`, mode 0644)
+  to the helper's stdio wrapper; the JSON allowlists exactly
+  `birdtray-close@nikky.st`.
+* Messages are length-prefixed (4-byte little-endian) on stdio; control
+  requests (`ensure-running`, `close-request`) go over a per-user **abstract
+  local socket** `birdtray-wayland-control-<uid>` that only the current user
+  can reach.
+* The add-on sends `ensure-running` at Thunderbird startup, so the helper is
+  always there when a ✕ click needs it — if it is not, Thunderbird starts a
+  fresh helper process on the spot (one-shot spawn), which then takes over
+  tray duty.
 
-Generally Birdtray expects a spec-compliant desktop manager. If you're using a barebone or non-standard/light/simple desktop manager, it is very likely that some features of Birdtray will not work properly. Most likely candidates are hiding and restoring Thunderbird window(s) - including their position and state. But sometimes even a system tray icon isn't shown. Linux Mint with Cinnamon seem to be one particularly troublesome distro which reports many issues.
+## Uninstall / recovery / rollback
 
-### Wayland / Flatpak Thunderbird
+* **Uninstall:** `./uninstall.sh`, then remove the add-on via Thunderbird's
+  Add-ons Manager. Your mail and profiles are never touched by anything here.
+* **Recovery:** if the tray menu is unreachable, quit the helper process and
+  simply start Thunderbird normally — worst case, closes behave like the
+  upstream minimize-on-close add-on (taskbar, not tray).
+* **Rollback per feature:** every helper delta lives in one patch under
+  `patches/`; revert the feature by reverting the commit / patch and
+  rebuilding.
 
-On a pure Wayland session (e.g. KDE Plasma Wayland), `QNativeInterface::QX11Application` returns `nullptr`, so the traditional X11 window-detection path cannot find Thunderbird's window handle. The same applies when Thunderbird is installed as a **Flatpak**: its process runs inside a `bwrap` sandbox, so `argv[0]` is `bwrap` rather than `thunderbird`, causing the previous `/proc` scan to miss it.
+## Licence and attribution
 
-The following fixes were applied to enable full hide/show support on Wayland + Flatpak Thunderbird:
+* Helper, deployment kit, tests: **GPL-3.0-or-later** (upstream birdtray by
+  George Yunaev; Wayland/Flatpak patches by stark1tty; this fork's additions
+  under the same licence).
+* Thunderbird add-on: **MPL-2.0**, original work by rsjtdrjgfuzkfg (Dirk
+  Steinmetz); this fork's modifications remain MPL-2.0 with notices in the
+  modified files. Full lineage in [`NOTICE.md`](NOTICE.md).
 
-1. **Process-based fallback detection** (`isThunderbirdProcessRunning()`): when the X11 root window is unavailable, `lookup()` now scans all `/proc/<PID>/cmdline` entries and checks *every* argument (not just `argv[0]`) for the configured process name. This correctly detects Flatpak Thunderbird even though `argv[0]` is `bwrap`.
+Thunderbird is a trademark of the Mozilla Foundation. This project is not
+affiliated with or endorsed by Mozilla.
 
-2. **`mProcessOnly` mode**: a new flag marks when Thunderbird was detected via `/proc` but not via X11. `isValid()`, `isHidden()`, `checkWindow()`, and `lookup()` all branch on this flag so the tray icon behaves correctly without a window handle.
-
-3. **KWin D-Bus scripting for hide/show** (`kwinScriptMinimize()`): on Wayland, window management is delegated to KWin via `qdbus6 org.kde.KWin`. A temporary JavaScript file is written to `/tmp`, loaded as a KWin script, and run asynchronously.
-   - **Hide**: sets `skipTaskbar = true`, `skipPager = true`, `minimized = true` — removes the window from the taskbar and panel pager.
-   - **Show**: sets `skipTaskbar = false`, `skipPager = false`, `minimized = false`, and assigns `workspace.activeWindow` to raise and focus the window.
-
-These changes are in effect when building from source on a Wayland session with KDE Plasma. The `qdbus6` binary must be available (provided by `qttools6` / `qt6-tools`). Email monitoring continues to work identically to the X11 path.
-
-## Submitting bugs and feature requests
-
-Please use Github issue tracker. Please attach the log output, if relevant. It could be obtained from Settings -> Advanced (tab) -> Show Log Window (button) -> copy-paste from it into bug report.
-
-### Translations
-
-Translations are maintained by the community.
-If you want to add a translation, you can follow [this guide](https://github.com/gyunaev/birdtray/wiki/Add-a-new-translation)
-and if you want to edit an existing translation, read [this page](https://github.com/gyunaev/birdtray/wiki/Edit-an-existing-translation).
-
-## Author and license
-
-Birdtray is written by George Yunaev, and is licensed under GPLv3 license.
-
-![birdtray-settings](screenshots/birdtray-settings.png)
+No warranty. This is a personal fork published in the hope that it is useful;
+see the licences for terms.
