@@ -1,19 +1,74 @@
-# Birdtray — close-to-tray for Thunderbird on KDE Plasma Wayland
+# Birdtray NG — reliable close-to-tray for Thunderbird on KDE Plasma Wayland
 
-> **This is a personal fork of [stark1tty/birdtray-wayland](https://github.com/stark1tty/birdtray-wayland)**,
-> which is itself a fork of [gyunaev/birdtray](https://github.com/gyunaev/birdtray).
-> This fork targets a **natively installed Thunderbird (128–158) on KDE Plasma Wayland**
-> and adds a *real* close-to-tray experience: clicking the message window's ✕ hides
-> it to the tray instead of exiting Thunderbird — with the tray icon bringing it back —
-> while the natural ways of quitting Thunderbird keep working.
+[![Licence](https://img.shields.io/github/license/NikkyNikke/birdtray-wayland)](LICENSE.txt)
+[![Latest release](https://img.shields.io/github/v/release/NikkyNikke/birdtray-wayland)](https://github.com/NikkyNikke/birdtray-wayland/releases)
+![Thunderbird — declared 128.0–158.\*, tested 158.0.1](https://img.shields.io/badge/thunderbird-declared_128.0%E2%80%93158.%2A_%C2%B7_tested_158.0.1-informational)
+![KDE Plasma on Wayland (KWin)](https://img.shields.io/badge/desktop-KDE_Plasma_on_Wayland_%28KWin%29-informational)
+
+**Birdtray NG** is a community continuation of
+[stark1tty/birdtray-wayland](https://github.com/stark1tty/birdtray-wayland), which is itself a
+fork of [gyunaev/birdtray](https://github.com/gyunaev/birdtray). **This is not the original
+Birdtray project and not affiliated with either upstream** — the lineage and credits are
+preserved in full in [`NOTICE.md`](NOTICE.md).
+
+> Birdtray NG focuses on a *real* close-to-tray experience: clicking the message window's ✕
+> hides a natively installed Thunderbird (128–158) to the KWin tray — with the tray icon
+> bringing it back — while the natural ways of quitting Thunderbird keep working. The upstream
+> project targets X11 (and, in stark1tty's fork, Flatpak Thunderbird on Wayland).
 >
-> The upstream project targets X11 (and, in stark1tty's fork, Flatpak Thunderbird on
-> Wayland). See [What this fork changes](#what-this-fork-changes) for exactly what was
-> added on top, and [Known limitations](#known-limitations) for what has *not* been
+> **Naming:** *Birdtray NG* is this fork's project name. The helper binary, install
+> directories, the native-messaging host name (`com.ulduzsoft.birdtray`) and the tray menu
+> entries keep the upstream-facing `birdtray` / `birdtray-wayland` identifiers for
+> compatibility with the lineage — they are the same project.
+>
+> Birdtray upstream is *a system tray new mail notification for Thunderbird, which does not
+> require extensions.* See [What this fork changes](#what-this-fork-changes) for exactly what
+> was added on top, and [Known limitations](#known-limitations) for what has *not* been
 > demonstrated.
 
-Birdtray upstream: *a system tray new mail notification for Thunderbird, which does
-not require extensions.*
+## Contents
+
+[Quick start](#quick-start) · [What this fork changes](#what-this-fork-changes) ·
+[How it works](#how-it-works-plain-english) · [Components](#components) ·
+[Tested environment](#tested-environment) · [Known limitations](#known-limitations) ·
+[Dependencies](#dependencies) · [Build](#build-the-helper) ·
+[Install](#install-per-user-no-root) · [The Thunderbird add-on](#the-thunderbird-add-on) ·
+[Native messaging](#native-messaging-and-single-instance) ·
+[Uninstall / recovery / rollback](#uninstall--recovery--rollback) ·
+[Related projects](#related-projects) · [Licence and attribution](#licence-and-attribution)
+
+## Quick start
+
+1. **Helper:** build it, then install the glue. This refuses to overwrite an existing
+   different helper — quit the old one first or pass `--force` (details in
+   [Install](#install-per-user-no-root)):
+
+   ```sh
+   cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_WITH_TESTS=ON && cmake --build build
+   ./install.sh --bindir build
+   ```
+
+   (`BUILD_WITH_TESTS=ON` needs GTest/GMock; the helper itself builds without the flag —
+   see [Build](#build-the-helper).)
+
+2. **Add-on:** install the published XPI from the
+   [latest release](https://github.com/NikkyNikke/birdtray-wayland/releases/latest) via
+   Thunderbird's Add-ons Manager → ⚙ → *Install Add-on From File…*
+   ([The Thunderbird add-on](#the-thunderbird-add-on)).
+
+   **The add-on ID must match the helper's allowlist.** The install writes
+   `~/.mozilla/native-messaging-hosts/com.ulduzsoft.birdtray.json`, which allowlists
+   exactly `birdtray-close@nikky.st` — the ID the published XPI declares in its manifest
+   (`applications.gecko.id`, range 128.0–158.\*). A differently-IDed add-on build is
+   refused by Thunderbird, and every ✕ then falls back to a plain taskbar minimize
+   (verified behaviour); the fix is to add that ID to the manifest's
+   `allowed_extensions` — see [The Thunderbird add-on](#the-thunderbird-add-on).
+
+3. **Start the helper:** `~/.local/opt/birdtray-wayland/launch-birdtray &`
+
+Then click ✕ on Thunderbird: the window hides to the tray, and the tray icon brings it
+back. Tested on KDE Plasma + KWin on Wayland with Thunderbird 158.0.1; other desktops
+are untested — see [Tested environment](#tested-environment).
 
 ## What this fork changes
 
@@ -38,7 +93,7 @@ of that. Applying all three, in that order, to a pristine upstream checkout
 reproduces the helper code committed here.
 | **Thunderbird add-on** in `extension/` | the ✕ click needs to be intercepted inside Thunderbird — done by forking Dirk Steinmetz's maintained *Minimize on Close* add-on | see [The Thunderbird add-on](#the-thunderbird-add-on) |
 | Deployment kit in `deployment/` + `install.sh` / `uninstall.sh` | reproducible per-user install with `$HOME` templates | n/a (new files) |
-| New unit tests (14 in `ctest`) | protocol, authorization and window-state logic are testable without a GUI | `tests/` |
+| New unit tests (19 in `ctest`) | protocol, authorization and window-state logic are testable without a GUI | `tests/` |
 
 ## How it works (plain English)
 
@@ -85,7 +140,7 @@ Everything below was **actually exercised live**, repeatedly:
 * Birdtray helper built with gcc + Qt 6
 * The close → hide → tray-restore cycle, the minimize ⇄ taskbar behaviour,
   both quit paths, Alt+Tab/Meta+W exclusion in both directions, helper
-  re-launch races, and a 14-test `ctest` suite.
+  re-launch races, and a 19-test `ctest` suite.
 
 If your setup differs (other distributions, other Wayland compositors, X11
 sessions, Flatpak/Snap Thunderbird, multiple profiles), treat it as
@@ -113,7 +168,7 @@ compatibility beyond the tested matrix.
    developed fork ([vegiii/birdtray-lite](https://github.com/vegiii/birdtray-lite))
    ran into the same race class and implemented the same pattern; the approach
    is credited there. The fix is **not** part of the `tb158-v1` release, which
-   was cut before it.
+   was cut before it; it shipped as `tb158-v2`.
 3. **KWin-specific.** Hiding/restoring uses KWin's DBus scripting interface
    (`qdbus6`). On GNOME or other compositors this will not work; nobody has
    tested it.
@@ -151,7 +206,7 @@ adds the GTest/GMock unit-test targets and needs system GTest.)
 Sanity-check the result:
 
 ```sh
-ctest --test-dir build        # 14 tests
+ctest --test-dir build        # 19 tests
 ```
 
 ## Install (per user, no root)
@@ -259,5 +314,5 @@ Install it via Thunderbird's **Add-ons Manager → ⚙ → Install Add-on From F
 Thunderbird is a trademark of the Mozilla Foundation. This project is not
 affiliated with or endorsed by Mozilla.
 
-No warranty. This is a personal fork published in the hope that it is useful;
-see the licences for terms.
+No warranty. This is a community continuation, published in the hope that it is
+useful; see the licences for terms.

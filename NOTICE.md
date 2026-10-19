@@ -23,6 +23,11 @@ Lineage:
   implemented confirm-then-retry approach to hiding inspired the
   confirmed-hide retry fix here (`patches/confirmed-hide-retry.patch`). No
   code was taken from it.
+* **Birdtray NG** — the project name of this repository's fork (the "This
+  fork" entries above are the same codebase). Naming does not change any
+  technical identifier: the add-on id (`birdtray-close@nikky.st`), the
+  native-messaging host name (`com.ulduzsoft.birdtray`), the install paths
+  (`~/.local/opt/birdtray-wayland`) and the tray-menu entries are unchanged.
 
 ## 2. The Thunderbird add-on (`extension/`)
 
