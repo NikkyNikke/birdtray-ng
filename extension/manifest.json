@@ -1,0 +1,41 @@
+{
+  "manifest_version": 2,
+  "applications": {
+    "gecko": {
+      "id": "birdtray-close@nikky.st",
+      "strict_min_version": "128.0",
+      "strict_max_version": "158.*"
+    }
+  },
+  "name": "Minimize on Close \u2014 Birdtray Wayland",
+  "description": "Hides Thunderbird to the Birdtray system tray when its close button is clicked. Fork of Minimize on Close by rsjtdrjgfuzkfg (MPL-2.0).",
+  "version": "2.0.3.2",
+  "author": "rsjtdrjgfuzkfg",
+  "icons": {
+    "64": "icon.png"
+  },
+  "background": {
+    "scripts": [
+      "background.js"
+    ]
+  },
+  "experiment_apis": {
+    "ex_windows": {
+      "schema": "experiment.json",
+      "parent": {
+        "scopes": [
+          "addon_parent"
+        ],
+        "paths": [
+          [
+            "ex_windows"
+          ]
+        ],
+        "script": "experiment.js"
+      }
+    }
+  },
+  "permissions": [
+    "nativeMessaging"
+  ]
+}
