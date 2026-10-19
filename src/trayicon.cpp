@@ -4,6 +4,8 @@
 #include <QProcess>
 #include <QMessageBox>
 #include <QPainterPath>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 #include "trayicon.h"
 #include "unreadmonitor.h"
@@ -12,6 +14,8 @@
 #include "autoupdater.h"
 #include "birdtrayapp.h"
 #include "log.h"
+#include "control_socket.h"
+#include "quit_authorization.h"
 
 TrayIcon::TrayIcon(bool showSettings)
 {
@@ -47,6 +51,7 @@ TrayIcon::TrayIcon(bool showSettings)
         connect(mWinTools, &WindowTools::onWindowShown, this, &TrayIcon::onThunderbirdWindowShown);
         connect(mWinTools, &WindowTools::onWindowHidden, this, &TrayIcon::onThunderbirdWindowHidden);
     }
+    startNativeControlServer();
     createMenu();
     createUnreadCounterThread();
 
@@ -87,6 +92,8 @@ TrayIcon::TrayIcon(bool showSettings)
 }
 
 TrayIcon::~TrayIcon() {
+    if (mNativeControlServer)
+        mNativeControlServer->close();
     if (settingsDialog != nullptr) {
         settingsDialog->deleteLater();
     }
@@ -365,6 +372,8 @@ void TrayIcon::updateState()
     if ( mWinTools )
     {
         mThunderbirdWindowExists = mWinTools->lookup();
+        clearQuitCloseAuthorizationIfWindowGone(mQuittingThunderbird,
+                                                mThunderbirdWindowExists);
 
         // Is Thunderbird running?
         if ( mThunderbirdWindowExists )
@@ -451,9 +460,87 @@ void TrayIcon::blinkTimeout()
     updateIcon();
 }
 
-void TrayIcon::actionQuit()
+void TrayIcon::actionQuitThunderbird()
 {
+    if (!mWinTools || !mWinTools->lookup()) {
+        QMessageBox::information(nullptr, tr("Thunderbird is not running"),
+                                 tr("Birdtray could not find a Thunderbird window to close."));
+        return;
+    }
+    mQuittingThunderbird = true;
+    if (!mWinTools->closeWindow()) {
+        mQuittingThunderbird = false;
+        QMessageBox::warning(nullptr, tr("Could not quit Thunderbird"),
+                             tr("KWin did not confirm the close request."));
+        return;
+    }
+    QTimer::singleShot(15000, this, [this]() { mQuittingThunderbird = false; });
+}
+
+void TrayIcon::actionQuitBirdtray()
+{
+    if (mWinTools && mWinTools->isHidden() && !mWinTools->show()) {
+        QMessageBox::warning(nullptr, tr("Could not restore Thunderbird"),
+                             tr("Birdtray will stay open because Thunderbird could not be restored."));
+        return;
+    }
+    mQuitBirdtrayOnly = true;
     QApplication::quit();
+}
+
+void TrayIcon::startNativeControlServer()
+{
+    mNativeControlServer = new QLocalServer(this);
+#if defined(Q_OS_LINUX)
+    mNativeControlServer->setSocketOptions(QLocalServer::UserAccessOption
+                                           | QLocalServer::AbstractNamespaceOption);
+#else
+    mNativeControlServer->setSocketOptions(QLocalServer::UserAccessOption);
+#endif
+    if (!mNativeControlServer->listen(birdtrayControlSocketName())) {
+        Log::debug("Native messaging control server unavailable: %s",
+                   qPrintable(mNativeControlServer->errorString()));
+        mNativeControlServer->deleteLater();
+        mNativeControlServer = nullptr;
+        return;
+    }
+    connect(mNativeControlServer, &QLocalServer::newConnection,
+            this, &TrayIcon::handleNativeControlConnection);
+}
+
+void TrayIcon::handleNativeControlConnection()
+{
+    while (mNativeControlServer && mNativeControlServer->hasPendingConnections()) {
+        QLocalSocket *socket = mNativeControlServer->nextPendingConnection();
+        if (!socket)
+            continue;
+        connect(socket, &QLocalSocket::readyRead, this,
+                [this, socket]() { handleNativeControlMessage(socket); });
+        connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
+    }
+}
+
+void TrayIcon::handleNativeControlMessage(QLocalSocket *socket)
+{
+    if (!socket || !socket->canReadLine())
+        return;
+    const QJsonDocument request = QJsonDocument::fromJson(socket->readLine(64 * 1024));
+    QJsonObject response{{QStringLiteral("action"), QStringLiteral("fallback")}};
+    const QString requestType = request.isObject()
+        ? request.object().value(QStringLiteral("type")).toString()
+        : QString();
+    if (requestType == QStringLiteral("ensure-running")) {
+        response.insert(QStringLiteral("action"), QStringLiteral("running"));
+    } else if (requestType == QStringLiteral("close-request")) {
+        if (consumeQuitCloseAuthorization(mQuittingThunderbird)) {
+            response.insert(QStringLiteral("action"), QStringLiteral("allow-close"));
+        } else if (mWinTools && mWinTools->hide()) {
+            response.insert(QStringLiteral("action"), QStringLiteral("hidden"));
+        }
+    }
+    socket->write(QJsonDocument(response).toJson(QJsonDocument::Compact) + '\n');
+    socket->waitForBytesWritten(1000);
+    socket->disconnectFromServer();
 }
 
 void TrayIcon::showSettings()
@@ -665,7 +752,8 @@ void TrayIcon::createMenu()
     mSystrayMenu->addSeparator();
 
     // And exit
-    mSystrayMenu->addAction( tr("Quit"), this, SLOT(actionQuit()) );
+    mSystrayMenu->addAction(tr("Quit Thunderbird"), this, SLOT(actionQuitThunderbird()));
+    mSystrayMenu->addAction(tr("Quit Birdtray"), this, SLOT(actionQuitBirdtray()));
 }
 
 void TrayIcon::createUnreadCounterThread()
@@ -766,6 +854,8 @@ void TrayIcon::tbUpdaterProcessFinished(const ProcessHandle::ExitReason& exitRea
 #endif /* Q_OS_WIN */
 
 void TrayIcon::onQuit() {
+    if (mQuitBirdtrayOnly)
+        return;
     if (mWinTools && mWinTools->isHidden()) {
         mWinTools->show();
     }

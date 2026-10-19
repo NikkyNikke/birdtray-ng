@@ -724,6 +724,30 @@ Bitte stellen Sie sicher, dass Sie den richtigen Ordner mit den Profilen ausgew√
         <translation>Thunderbird ausblenden</translation>
     </message>
     <message>
+        <source>Thunderbird is not running</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Birdtray could not find a Thunderbird window to close.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not quit Thunderbird</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>KWin did not confirm the close request.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not restore Thunderbird</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Birdtray will stay open because Thunderbird could not be restored.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>New Email</source>
         <translation>Neue E-Mail</translation>
     </message>
@@ -772,8 +796,16 @@ Bitte stellen Sie sicher, dass Sie den richtigen Ordner mit den Profilen ausgew√
         <translation>Einstellungen‚Ä¶</translation>
     </message>
     <message>
+        <source>Quit Thunderbird</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Quit Birdtray</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Quit</source>
-        <translation>Beenden</translation>
+        <translation type="vanished">Beenden</translation>
     </message>
     <message>
         <source>Cannot start Thunderbird</source>

@@ -4,9 +4,16 @@
 #include <QFile>
 #include <QProcess>
 #include <QStringList>
+#include <QTemporaryFile>
+#include <QEventLoop>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QUuid>
+#include <QDBusConnection>
 
 #include "birdtrayapp.h"
 #include "windowtools_x11.h"
+#include "windowtools_x11_state.h"
 #include "settings.h"
 #include "utils.h"
 #include "log.h"
@@ -418,8 +425,9 @@ bool WindowTools_X11::show()
     // the already-running instance instead of launching a second one.
     if ( mProcessOnly )
     {
-        // Un-minimize, restore to taskbar, and focus via KWin scripting
-        kwinScriptMinimize( false );
+        // Restore and focus the PID-matched Thunderbird window through KWin.
+        if (!runKWinScript(QStringLiteral("show")))
+            return false;
 
         mHiddenStateCounter = 0;
         emit onWindowShown();
@@ -468,8 +476,9 @@ bool WindowTools_X11::hide()
             return false;
         }
 
-        // Minimize the Wayland-native TB window via KWin D-Bus scripting
-        kwinScriptMinimize( true );
+        // Hide only after KWin reports that every matching window was hidden.
+        if (!runKWinScript(QStringLiteral("hide")))
+            return false;
 
         mHiddenStateCounter = 2;
         emit onWindowHidden();
@@ -501,13 +510,23 @@ bool WindowTools_X11::hide()
 bool WindowTools_X11::isHidden()
 {
     if ( mProcessOnly )
-        return mHiddenStateCounter == 2;
+        return WindowToolsX11State::isHidden(mHiddenStateCounter, true, false, false);
+    if ( mHiddenStateCounter != 2 )
+        return false;
 
-    return mHiddenStateCounter == 2 && mWinId != activeWindow( x11_display() );
+    Display *display = x11_display();
+    if ( !display )
+        return WindowToolsX11State::isHidden(mHiddenStateCounter, false, false, false);
+
+    return WindowToolsX11State::isHidden(mHiddenStateCounter, false, true,
+                                         mWinId == activeWindow(display));
 }
 
 bool WindowTools_X11::closeWindow()
 {
+    if (mProcessOnly)
+        return runKWinScript(QStringLiteral("close"));
+
     if ( !checkWindow() )
         return false;
 
@@ -610,88 +629,148 @@ bool WindowTools_X11::checkWindow()
     return true;
 }
 
-void WindowTools_X11::kwinScriptMinimize( bool minimize )
+QString WindowTools_X11::matchedPidsJsArray() const
 {
-    // Write a one-shot KWin script to minimize/restore the TB window by caption.
-    // This is the only reliable way to control a Wayland-native window from outside
-    // the compositor on KDE Plasma.
-    const QString windowMatch = BirdtrayApp::get()->getSettings()->mThunderbirdWindowMatch.trimmed();
-    const QString searchStr   = windowMatch.isEmpty() ? QString("Thunderbird") : windowMatch;
-    const QString minimizeVal = minimize ? "true" : "false";
+    QJsonArray array;
+    for (qint64 pid : mThunderbirdPids)
+        array.append(static_cast<double>(pid));
+    const QByteArray json = QJsonDocument(array).toJson(QJsonDocument::Compact);
+    return QString::fromUtf8(json);
+}
 
-    // When hiding: minimize and remove from taskbar/pager.
-    // When showing: restore from taskbar, un-minimize, and activate (focus).
-    const QString script = minimize
-        ? QString(
-            "var w = workspace.windowList();\n"
-            "for (var i = 0; i < w.length; i++) {\n"
-            "    if (w[i].caption.indexOf(\"%1\") >= 0) {\n"
-            "        w[i].skipTaskbar = true;\n"
-            "        w[i].skipPager   = true;\n"
-            "        w[i].minimized   = true;\n"
-            "        break;\n"
-            "    }\n"
-            "}\n"
-          ).arg(QString(searchStr).replace("\"", "\\\""))
-        : QString(
-            "var w = workspace.windowList();\n"
-            "for (var i = 0; i < w.length; i++) {\n"
-            "    if (w[i].caption.indexOf(\"%1\") >= 0) {\n"
-            "        w[i].skipTaskbar = false;\n"
-            "        w[i].skipPager   = false;\n"
-            "        w[i].minimized   = false;\n"
-            "        workspace.activeWindow = w[i];\n"
-            "        break;\n"
-            "    }\n"
-            "}\n"
-          ).arg(QString(searchStr).replace("\"", "\\\""));
-
-    const QString scriptPath = QDir::tempPath() + "/birdtray_kwin_minimize.js";
-    QFile f( scriptPath );
-    if ( !f.open( QIODevice::WriteOnly | QIODevice::Truncate ) )
-    {
-        Log::debug("kwinScriptMinimize: failed to write temp script" );
+void WindowTools_X11::operationFinished(const QString &token, int success)
+{
+    if (token != mPendingKWinToken)
         return;
-    }
-    f.write( script.toUtf8() );
-    f.close();
+    mPendingKWinComplete = true;
+    mPendingKWinResult = success != 0;
+    emit kwinOperationReported(token, success);
+}
 
-    QProcess loadProc;
-    loadProc.start("qdbus6", {
-        "org.kde.KWin", "/Scripting",
-        "org.kde.kwin.Scripting.loadScript", scriptPath
+bool WindowTools_X11::runKWinScript(const QString &action)
+{
+    if (mThunderbirdPids.isEmpty() && !isThunderbirdProcessRunning())
+        return false;
+
+    QDBusConnection bus = QDBusConnection::sessionBus();
+    if (!bus.isConnected()) {
+        Log::debug("runKWinScript: session bus is unavailable");
+        return false;
+    }
+    static const QString objectPath = QStringLiteral("/org/birdtray/WaylandControl");
+    if (!mDBusObjectRegistered) {
+        if (!bus.registerObject(objectPath, this, QDBusConnection::ExportAllSlots)) {
+            Log::debug("runKWinScript: could not export the KWin result callback");
+            return false;
+        }
+        mDBusObjectRegistered = true;
+    }
+
+    QTemporaryFile scriptFile(QDir::tempPath() + QStringLiteral("/birdtray-kwin-XXXXXX.js"));
+    if (!scriptFile.open()) {
+        Log::debug("runKWinScript: could not create a private temporary KWin script");
+        return false;
+    }
+
+    const QString token = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    mPendingKWinToken = token;
+    mPendingKWinComplete = false;
+    mPendingKWinResult = false;
+
+    const QString body = QStringLiteral(
+        "var pids = %1;\n"
+        "var wins = workspace.windowList();\n"
+        "var matches = [];\n"
+        "for (var i = 0; i < wins.length; i++) {\n"
+        "  if (pids.indexOf(wins[i].pid) >= 0 && !wins[i].specialWindow) matches.push(wins[i]);\n"
+        "}\n"
+        "var ok = matches.length > 0;\n"
+        "if (%2 === \"hide\") {\n"
+        "  for (var j = 0; j < matches.length; j++) {\n"
+        "    matches[j].skipTaskbar = true; matches[j].skipPager = true; matches[j].minimized = true;\n"
+        "    if (!matches[j].minimized || !matches[j].skipTaskbar) ok = false;\n"
+        "  }\n"
+        "} else if (%2 === \"show\") {\n"
+        "  for (var k = 0; k < matches.length; k++) {\n"
+        "    matches[k].skipTaskbar = false; matches[k].skipPager = false; matches[k].minimized = false;\n"
+        "    if (matches[k].minimized || matches[k].skipTaskbar) ok = false;\n"
+        "  }\n"
+        "  if (matches.length) workspace.activeWindow = matches[0];\n"
+        "  if (matches.length && !matches[0].active) ok = false;\n"
+        "} else if (%2 === \"close\") {\n"
+        "  for (var n = 0; n < matches.length; n++) matches[n].closeWindow();\n"
+        "} else { ok = false; }\n"
+        "callDBus(%3, %4, %5, \"operationFinished\", %6, ok ? 1 : 0);\n")
+        .arg(matchedPidsJsArray(),
+             QJsonDocument(QJsonArray{action}).toJson(QJsonDocument::Compact).mid(1).chopped(1),
+             QJsonDocument(QJsonArray{bus.baseService()}).toJson(QJsonDocument::Compact).mid(1).chopped(1),
+             QJsonDocument(QJsonArray{objectPath}).toJson(QJsonDocument::Compact).mid(1).chopped(1),
+             QJsonDocument(QJsonArray{QStringLiteral("org.birdtray.WaylandControl")}).toJson(QJsonDocument::Compact).mid(1).chopped(1),
+             QJsonDocument(QJsonArray{token}).toJson(QJsonDocument::Compact).mid(1).chopped(1));
+    if (scriptFile.write(body.toUtf8()) != body.toUtf8().size() || !scriptFile.flush()) {
+        mPendingKWinToken.clear();
+        Log::debug("runKWinScript: failed to write the KWin script");
+        return false;
+    }
+
+    QProcess loadProcess;
+    loadProcess.start(QStringLiteral("qdbus6"), {
+        QStringLiteral("org.kde.KWin"), QStringLiteral("/Scripting"),
+        QStringLiteral("org.kde.kwin.Scripting.loadScript"), scriptFile.fileName()
     });
-
-    if ( !loadProc.waitForFinished( 2000 ) )
-    {
-        Log::debug("kwinScriptMinimize: qdbus6 loadScript timed out" );
-        QFile::remove( scriptPath );
-        return;
+    if (!loadProcess.waitForStarted(1000) || !loadProcess.waitForFinished(2000)
+        || loadProcess.exitStatus() != QProcess::NormalExit || loadProcess.exitCode() != 0) {
+        mPendingKWinToken.clear();
+        Log::debug("runKWinScript: KWin script load failed or timed out");
+        return false;
+    }
+    bool idOk = false;
+    const int scriptId = loadProcess.readAllStandardOutput().trimmed().toInt(&idOk);
+    if (!idOk || scriptId <= 0) {
+        mPendingKWinToken.clear();
+        Log::debug("runKWinScript: KWin returned an invalid script ID");
+        return false;
     }
 
-    bool ok;
-    int scriptId = loadProc.readAllStandardOutput().trimmed().toInt( &ok );
-    if ( !ok || scriptId <= 0 )
-    {
-        Log::debug("kwinScriptMinimize: loadScript returned invalid id (qdbus6 not available?)" );
-        QFile::remove( scriptPath );
-        return;
-    }
-
-    // Run async — don't block the GUI thread waiting for KWin to execute the script
-    QProcess::startDetached("qdbus6", {
-        "org.kde.KWin",
-        QString("/Scripting/Script%1").arg(scriptId),
-        "org.kde.kwin.Script.run"
+    QEventLoop operationLoop;
+    QTimer timeout;
+    timeout.setSingleShot(true);
+    connect(this, &WindowTools_X11::kwinOperationReported, &operationLoop,
+            [&operationLoop, &token](const QString &reportedToken, int) {
+        if (reportedToken == token)
+            operationLoop.quit();
     });
+    connect(&timeout, &QTimer::timeout, &operationLoop, &QEventLoop::quit);
 
-    // Temp file will be cleaned up after a short delay to ensure KWin has read it
-    QTimer::singleShot( 500, [scriptPath]() { QFile::remove( scriptPath ); } );
-    Log::debug("kwinScriptMinimize: minimize=%s via KWin script id %d", minimize ? "true" : "false", scriptId );
+    const bool runStarted = QProcess::startDetached(QStringLiteral("qdbus6"), {
+        QStringLiteral("org.kde.KWin"),
+        QStringLiteral("/Scripting/Script%1").arg(scriptId),
+        QStringLiteral("org.kde.kwin.Script.run")
+    });
+    if (!runStarted) {
+        mPendingKWinToken.clear();
+        return false;
+    }
+    timeout.start(3000);
+    if (!mPendingKWinComplete)
+        operationLoop.exec();
+    const bool success = mPendingKWinComplete && mPendingKWinResult;
+    mPendingKWinToken.clear();
+
+    QProcess unloadProcess;
+    unloadProcess.start(QStringLiteral("qdbus6"), {
+        QStringLiteral("org.kde.KWin"), QStringLiteral("/Scripting"),
+        QStringLiteral("org.kde.kwin.Scripting.unloadScript"), QString::number(scriptId)
+    });
+    unloadProcess.waitForFinished(1000);
+    Log::debug("runKWinScript: action=%s script=%d result=%s", qPrintable(action), scriptId,
+               success ? "success" : "failure/timeout");
+    return success;
 }
 
 bool WindowTools_X11::isThunderbirdProcessRunning()
 {
+    mThunderbirdPids.clear();
     const QString processName = BirdtrayApp::get()->getSettings()->mThunderbirdProcessName;
     QDir procDir( "/proc" );
     const QStringList entries = procDir.entryList( QDir::Dirs | QDir::NoDotAndDotDot );
@@ -717,10 +796,11 @@ bool WindowTools_X11::isThunderbirdProcessRunning()
         {
             if ( arg.isEmpty() )
                 continue;
-            if ( QString::fromLocal8Bit(arg).contains( processName, Qt::CaseInsensitive ) )
-                return true;
+            if ( QString::fromLocal8Bit(arg).contains(processName, Qt::CaseInsensitive)) {
+                mThunderbirdPids.append(entry.toLongLong());
+                break;
+            }
         }
     }
-
-    return false;
+    return !mThunderbirdPids.isEmpty();
 }

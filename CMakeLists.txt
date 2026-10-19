@@ -12,9 +12,10 @@ find_package(Qt6Core CONFIG REQUIRED)
 find_package(Qt6Gui CONFIG REQUIRED)
 find_package(Qt6Widgets CONFIG REQUIRED)
 find_package(Qt6Network CONFIG REQUIRED)
+find_package(Qt6DBus CONFIG REQUIRED)
 find_package(Qt6Svg CONFIG REQUIRED)
 find_package(Qt6LinguistTools CONFIG QUIET)
-set(REQUIRED_MODULES Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Svg)
+set(REQUIRED_MODULES Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::DBus Qt6::Svg)
 
 set(PLATFORM_SOURCES)
 set(PLATFORM_HEADERS)
@@ -81,6 +82,7 @@ set(SOURCES
         src/updatedownloaddialog.cpp
         src/mailaccountdialog.cpp
         src/birdtrayapp.cpp
+        src/native_messaging.cpp
         src/dialogaddeditnewemail.ui
         src/dialogsettings.ui
         src/updatedialog.ui

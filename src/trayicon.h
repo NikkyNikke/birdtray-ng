@@ -7,6 +7,8 @@
 #include <QImage>
 #include <QProcess>
 #include <QSystemTrayIcon>
+#include <QLocalServer>
+#include <QLocalSocket>
 #ifdef Q_OS_WIN
 #  include "processhandle.h"
 #endif /* Q_OS_WIN */
@@ -77,7 +79,11 @@ class TrayIcon : public QSystemTrayIcon
         void    blinkTimeout();
 
         // Context menu actions
-        static void actionQuit();
+        void actionQuitThunderbird();
+        void actionQuitBirdtray();
+        void startNativeControlServer();
+        void handleNativeControlConnection();
+        void handleNativeControlMessage(QLocalSocket *socket);
         void    actionActivate();
         void    actionSnoozeFor();
         void    actionUnsnooze();
@@ -206,6 +212,10 @@ class TrayIcon : public QSystemTrayIcon
         // was started before Birdtray (thus our process would just activate it and exit)
         // Thus checking this pointer for null doesn't mean TB is not started.
         QProcess    *   mThunderbirdProcess;
+
+        QLocalServer* mNativeControlServer = nullptr;
+        bool mQuittingThunderbird = false;
+        bool mQuitBirdtrayOnly = false;
 
         // System tray context menu. Once set, it remains there, so we have to modify existing one
         QMenu       *   mSystrayMenu;

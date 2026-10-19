@@ -727,6 +727,30 @@ Ujistěte se, že jste vybrali správný adresář profilů.</translation>
         <translation>Skrýt Thunderbird</translation>
     </message>
     <message>
+        <source>Thunderbird is not running</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Birdtray could not find a Thunderbird window to close.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not quit Thunderbird</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>KWin did not confirm the close request.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not restore Thunderbird</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Birdtray will stay open because Thunderbird could not be restored.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>New Email</source>
         <translation>Nový Email</translation>
     </message>
@@ -775,8 +799,16 @@ Ujistěte se, že jste vybrali správný adresář profilů.</translation>
         <translation>Nastavení...</translation>
     </message>
     <message>
+        <source>Quit Thunderbird</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Quit Birdtray</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Quit</source>
-        <translation>Ukončit</translation>
+        <translation type="vanished">Ukončit</translation>
     </message>
     <message>
         <source>Cannot start Thunderbird</source>
