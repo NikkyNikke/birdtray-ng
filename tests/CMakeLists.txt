@@ -16,6 +16,7 @@ set(TESTS
         src/test_utils.cpp
         src/test_windowtools_x11_state.cpp
         src/test_quit_authorization.cpp
+        src/test_hide_retry_policy.cpp
         )
 
 add_executable(tests src/TestResources.cpp src/TestResources.h ${TESTS})

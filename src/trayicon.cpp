@@ -16,6 +16,7 @@
 #include "log.h"
 #include "control_socket.h"
 #include "quit_authorization.h"
+#include "hide_retry_policy.h"
 
 TrayIcon::TrayIcon(bool showSettings)
 {
@@ -41,6 +42,8 @@ TrayIcon::TrayIcon(bool showSettings)
     mThunderbirdWindowExists = false;
     mThunderbirdWindowExisted = false;
     mThunderbirdWindowHide = false;
+    mPendingCloseRetryTimer.setSingleShot(true);
+    connect( &mPendingCloseRetryTimer, &QTimer::timeout, this, &TrayIcon::attemptConfirmedHideReply );
     connect(QApplication::instance(), &QApplication::aboutToQuit, this, &TrayIcon::onQuit);
 
     Settings* settings = BirdtrayApp::get()->getSettings();
@@ -534,10 +537,78 @@ void TrayIcon::handleNativeControlMessage(QLocalSocket *socket)
     } else if (requestType == QStringLiteral("close-request")) {
         if (consumeQuitCloseAuthorization(mQuittingThunderbird)) {
             response.insert(QStringLiteral("action"), QStringLiteral("allow-close"));
-        } else if (mWinTools && mWinTools->hide()) {
+        } else if (mWinTools == nullptr) {
+            // No window tools: keep the unchanged minimize fallback reply.
+        } else if (socket == mPendingCloseReply.data()) {
+            // More input on the connection whose reply is already pending;
+            // that pending reply decides this socket's fate.
+            return;
+        } else if (mPendingCloseReply) {
+            // Another close-request reply is still settling; serve this one
+            // with the unchanged fast fallback.
+        } else if (mWinTools->hide()) {
+            // Confirmed right away: the same fast path as before retries.
             response.insert(QStringLiteral("action"), QStringLiteral("hidden"));
+        } else {
+            // The hide did not confirm (e.g. the window list was not fully
+            // populated yet right after an application start): hold the
+            // reply and retry with a bounded budget (HideRetryPolicy).
+            Log::debug("Close-request: hide unconfirmed; retrying for up to %d ms",
+                       HideRetryPolicy::totalBudgetMs());
+            mPendingCloseReply = socket;
+            mPendingCloseAttempts = 1;
+            mPendingCloseRetryTimer.start(HideRetryPolicy::attemptSpacingMs);
+            return;
         }
     }
+    socket->write(QJsonDocument(response).toJson(QJsonDocument::Compact) + '\n');
+    socket->waitForBytesWritten(1000);
+    socket->disconnectFromServer();
+}
+
+void TrayIcon::attemptConfirmedHideReply()
+{
+    if (!mPendingCloseReply) {
+        // Nothing pending anymore (e.g. the click handler cancelled it while
+        // a hide attempt was still running inside its script event loop).
+        return;
+    }
+    QLocalSocket *socket = mPendingCloseReply.data();
+    if (socket->state() != QLocalSocket::ConnectedState) {
+        // The add-on went away; there is nobody left to answer.
+        finishPendingCloseReply();
+        return;
+    }
+    ++mPendingCloseAttempts;
+    // The hide() result is script-confirmed. isHidden() additionally covers a
+    // hide that a concurrent code path already confirmed (the hide call
+    // refuses to repeat itself once the confirmed state is set).
+    const bool confirmed = (mWinTools != nullptr && (mWinTools->hide() || mWinTools->isHidden()));
+    const HideRetryPolicy::Step step = HideRetryPolicy::evaluate(mPendingCloseAttempts, confirmed);
+    if (step == HideRetryPolicy::Step::Hidden) {
+        Log::debug("Close-request: hide confirmed on attempt %d", mPendingCloseAttempts);
+        writeNativeReply(socket, QStringLiteral("hidden"));
+        finishPendingCloseReply();
+    } else if (step == HideRetryPolicy::Step::Exhausted) {
+        Log::debug("Close-request: hide still unconfirmed after %d attempts; falling back",
+                   mPendingCloseAttempts);
+        writeNativeReply(socket, QStringLiteral("fallback"));
+        finishPendingCloseReply();
+    } else {
+        mPendingCloseRetryTimer.start(HideRetryPolicy::attemptSpacingMs);
+    }
+}
+
+void TrayIcon::finishPendingCloseReply()
+{
+    mPendingCloseReply = nullptr;
+    mPendingCloseAttempts = 0;
+    mPendingCloseRetryTimer.stop();
+}
+
+void TrayIcon::writeNativeReply(QLocalSocket *socket, const QString& action)
+{
+    QJsonObject response{{QStringLiteral("action"), action}};
     socket->write(QJsonDocument(response).toJson(QJsonDocument::Compact) + '\n');
     socket->waitForBytesWritten(1000);
     socket->disconnectFromServer();
@@ -581,6 +652,20 @@ void TrayIcon::actionActivate()
 {
     if ( !mWinTools )
         return;
+
+    // An explicit tray click during a pending close-request answer asks for a
+    // visible window: drop the pending reply (its client gets the minimize
+    // fallback, so it minimizes visibly instead of hiding), show the window
+    // and let the click end there instead of toggling.
+    if (mPendingCloseReply) {
+        QLocalSocket *socket = mPendingCloseReply.data();
+        finishPendingCloseReply();
+        if (socket) {
+            writeNativeReply(socket, QStringLiteral("fallback"));
+        }
+        showThunderbird();
+        return;
+    }
 
     Settings* settings = BirdtrayApp::get()->getSettings();
     if ( settings->startClosedThunderbird && !mWinTools->lookup() && mThunderbirdProcess == nullptr ) {

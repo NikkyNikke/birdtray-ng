@@ -9,6 +9,7 @@
 #include <QSystemTrayIcon>
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <QPointer>
 #ifdef Q_OS_WIN
 #  include "processhandle.h"
 #endif /* Q_OS_WIN */
@@ -84,6 +85,9 @@ class TrayIcon : public QSystemTrayIcon
         void startNativeControlServer();
         void handleNativeControlConnection();
         void handleNativeControlMessage(QLocalSocket *socket);
+        void attemptConfirmedHideReply();
+        void finishPendingCloseReply();
+        void writeNativeReply(QLocalSocket *socket, const QString& action);
         void    actionActivate();
         void    actionSnoozeFor();
         void    actionUnsnooze();
@@ -216,6 +220,14 @@ class TrayIcon : public QSystemTrayIcon
         QLocalServer* mNativeControlServer = nullptr;
         bool mQuittingThunderbird = false;
         bool mQuitBirdtrayOnly = false;
+        // Pending confirmed-hide reply for a close-request: the reply is
+        // written only after the hide is confirmed, retried with a bounded
+        // budget (see HideRetryPolicy). The pointer automatically nulls when
+        // the control socket goes away. An explicit tray click cancels a
+        // pending reply and answers with the minimize fallback.
+        QPointer<QLocalSocket> mPendingCloseReply;
+        QTimer mPendingCloseRetryTimer;
+        int mPendingCloseAttempts = 0;
 
         // System tray context menu. Once set, it remains there, so we have to modify existing one
         QMenu       *   mSystrayMenu;
