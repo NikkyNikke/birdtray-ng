@@ -1,0 +1,285 @@
+diff --git a/src/hide_retry_policy.h b/src/hide_retry_policy.h
+new file mode 100644
+index 0000000..47e0195
+--- /dev/null
++++ b/src/hide_retry_policy.h
+@@ -0,0 +1,62 @@
++#ifndef BIRDTRAY_HIDE_RETRY_POLICY_H
++#define BIRDTRAY_HIDE_RETRY_POLICY_H
++
++/**
++ * Decision logic for answering add-on close requests.
++ *
++ * A close-request is answered with "hidden" only when the hide script
++ * confirms that every matching window ended up minimized and excluded from
++ * the taskbar, pager and switcher. The very first attempt may still miss
++ * (for example when the window list is not fully populated yet right after
++ * an application start), so unconfirmed attempts retry for a short and
++ * strictly bounded time window. If the budget runs out without a
++ * confirmation, the caller answers with the unchanged minimize fallback.
++ * An explicit user gesture (a tray icon click) cancels a pending reply and
++ * also answers with the fallback. This keeps the reply protocol identical
++ * to the pre-retry behaviour for all non-race situations.
++ */
++namespace HideRetryPolicy
++{
++enum class Step
++{
++    Hidden,    ///< Confirmed: answer with "hidden".
++    Retry,     ///< Unconfirmed, but attempts remain: schedule the next one.
++    Exhausted, ///< Unconfirmed and the budget is used up: fall back.
++};
++
++/**
++ * How many attempts happen in total, including the immediate first one.
++ */
++constexpr int maxAttempts = 5;
++
++/**
++ * Spacing between the follow-up attempts; attempt 1 happens immediately.
++ */
++constexpr int attemptSpacingMs = 250;
++
++/**
++ * Upper bound for how long a close request may wait for its final answer
++ * before it falls back.
++ */
++constexpr int totalBudgetMs()
++{
++    return maxAttempts * attemptSpacingMs;
++}
++
++/**
++ * Evaluate the next step after an attempt.
++ *
++ * @param attempt   The 1-based number of the finished attempt.
++ * @param confirmed Whether the hide attempt was confirmed.
++ */
++constexpr Step evaluate(const int attempt, const bool confirmed)
++{
++    if (confirmed)
++    {
++        return Step::Hidden;
++    }
++    return attempt < maxAttempts ? Step::Retry : Step::Exhausted;
++}
++}
++
++#endif /* BIRDTRAY_HIDE_RETRY_POLICY_H */
+diff --git a/src/trayicon.cpp b/src/trayicon.cpp
+index fb97413..d126a3b 100644
+--- a/src/trayicon.cpp
++++ b/src/trayicon.cpp
+@@ -16,6 +16,7 @@
+ #include "log.h"
+ #include "control_socket.h"
+ #include "quit_authorization.h"
++#include "hide_retry_policy.h"
+ 
+ TrayIcon::TrayIcon(bool showSettings)
+ {
+@@ -41,6 +42,8 @@ TrayIcon::TrayIcon(bool showSettings)
+     mThunderbirdWindowExists = false;
+     mThunderbirdWindowExisted = false;
+     mThunderbirdWindowHide = false;
++    mPendingCloseRetryTimer.setSingleShot(true);
++    connect( &mPendingCloseRetryTimer, &QTimer::timeout, this, &TrayIcon::attemptConfirmedHideReply );
+     connect(QApplication::instance(), &QApplication::aboutToQuit, this, &TrayIcon::onQuit);
+ 
+     Settings* settings = BirdtrayApp::get()->getSettings();
+@@ -534,8 +537,28 @@ void TrayIcon::handleNativeControlMessage(QLocalSocket *socket)
+     } else if (requestType == QStringLiteral("close-request")) {
+         if (consumeQuitCloseAuthorization(mQuittingThunderbird)) {
+             response.insert(QStringLiteral("action"), QStringLiteral("allow-close"));
+-        } else if (mWinTools && mWinTools->hide()) {
++        } else if (mWinTools == nullptr) {
++            // No window tools: keep the unchanged minimize fallback reply.
++        } else if (socket == mPendingCloseReply.data()) {
++            // More input on the connection whose reply is already pending;
++            // that pending reply decides this socket's fate.
++            return;
++        } else if (mPendingCloseReply) {
++            // Another close-request reply is still settling; serve this one
++            // with the unchanged fast fallback.
++        } else if (mWinTools->hide()) {
++            // Confirmed right away: the same fast path as before retries.
+             response.insert(QStringLiteral("action"), QStringLiteral("hidden"));
++        } else {
++            // The hide did not confirm (e.g. the window list was not fully
++            // populated yet right after an application start): hold the
++            // reply and retry with a bounded budget (HideRetryPolicy).
++            Log::debug("Close-request: hide unconfirmed; retrying for up to %d ms",
++                       HideRetryPolicy::totalBudgetMs());
++            mPendingCloseReply = socket;
++            mPendingCloseAttempts = 1;
++            mPendingCloseRetryTimer.start(HideRetryPolicy::attemptSpacingMs);
++            return;
+         }
+     }
+     socket->write(QJsonDocument(response).toJson(QJsonDocument::Compact) + '\n');
+@@ -543,6 +566,54 @@ void TrayIcon::handleNativeControlMessage(QLocalSocket *socket)
+     socket->disconnectFromServer();
+ }
+ 
++void TrayIcon::attemptConfirmedHideReply()
++{
++    if (!mPendingCloseReply) {
++        // Nothing pending anymore (e.g. the click handler cancelled it while
++        // a hide attempt was still running inside its script event loop).
++        return;
++    }
++    QLocalSocket *socket = mPendingCloseReply.data();
++    if (socket->state() != QLocalSocket::ConnectedState) {
++        // The add-on went away; there is nobody left to answer.
++        finishPendingCloseReply();
++        return;
++    }
++    ++mPendingCloseAttempts;
++    // The hide() result is script-confirmed. isHidden() additionally covers a
++    // hide that a concurrent code path already confirmed (the hide call
++    // refuses to repeat itself once the confirmed state is set).
++    const bool confirmed = (mWinTools != nullptr && (mWinTools->hide() || mWinTools->isHidden()));
++    const HideRetryPolicy::Step step = HideRetryPolicy::evaluate(mPendingCloseAttempts, confirmed);
++    if (step == HideRetryPolicy::Step::Hidden) {
++        Log::debug("Close-request: hide confirmed on attempt %d", mPendingCloseAttempts);
++        writeNativeReply(socket, QStringLiteral("hidden"));
++        finishPendingCloseReply();
++    } else if (step == HideRetryPolicy::Step::Exhausted) {
++        Log::debug("Close-request: hide still unconfirmed after %d attempts; falling back",
++                   mPendingCloseAttempts);
++        writeNativeReply(socket, QStringLiteral("fallback"));
++        finishPendingCloseReply();
++    } else {
++        mPendingCloseRetryTimer.start(HideRetryPolicy::attemptSpacingMs);
++    }
++}
++
++void TrayIcon::finishPendingCloseReply()
++{
++    mPendingCloseReply = nullptr;
++    mPendingCloseAttempts = 0;
++    mPendingCloseRetryTimer.stop();
++}
++
++void TrayIcon::writeNativeReply(QLocalSocket *socket, const QString& action)
++{
++    QJsonObject response{{QStringLiteral("action"), action}};
++    socket->write(QJsonDocument(response).toJson(QJsonDocument::Compact) + '\n');
++    socket->waitForBytesWritten(1000);
++    socket->disconnectFromServer();
++}
++
+ void TrayIcon::showSettings()
+ {
+     if (settingsDialog != nullptr) {
+@@ -582,6 +653,20 @@ void TrayIcon::actionActivate()
+     if ( !mWinTools )
+         return;
+ 
++    // An explicit tray click during a pending close-request answer asks for a
++    // visible window: drop the pending reply (its client gets the minimize
++    // fallback, so it minimizes visibly instead of hiding), show the window
++    // and let the click end there instead of toggling.
++    if (mPendingCloseReply) {
++        QLocalSocket *socket = mPendingCloseReply.data();
++        finishPendingCloseReply();
++        if (socket) {
++            writeNativeReply(socket, QStringLiteral("fallback"));
++        }
++        showThunderbird();
++        return;
++    }
++
+     Settings* settings = BirdtrayApp::get()->getSettings();
+     if ( settings->startClosedThunderbird && !mWinTools->lookup() && mThunderbirdProcess == nullptr ) {
+         startThunderbird();
+diff --git a/src/trayicon.h b/src/trayicon.h
+index cf5d486..b96b135 100644
+--- a/src/trayicon.h
++++ b/src/trayicon.h
+@@ -9,6 +9,7 @@
+ #include <QSystemTrayIcon>
+ #include <QLocalServer>
+ #include <QLocalSocket>
++#include <QPointer>
+ #ifdef Q_OS_WIN
+ #  include "processhandle.h"
+ #endif /* Q_OS_WIN */
+@@ -84,6 +85,9 @@ class TrayIcon : public QSystemTrayIcon
+         void startNativeControlServer();
+         void handleNativeControlConnection();
+         void handleNativeControlMessage(QLocalSocket *socket);
++        void attemptConfirmedHideReply();
++        void finishPendingCloseReply();
++        void writeNativeReply(QLocalSocket *socket, const QString& action);
+         void    actionActivate();
+         void    actionSnoozeFor();
+         void    actionUnsnooze();
+@@ -216,6 +220,14 @@ class TrayIcon : public QSystemTrayIcon
+         QLocalServer* mNativeControlServer = nullptr;
+         bool mQuittingThunderbird = false;
+         bool mQuitBirdtrayOnly = false;
++        // Pending confirmed-hide reply for a close-request: the reply is
++        // written only after the hide is confirmed, retried with a bounded
++        // budget (see HideRetryPolicy). The pointer automatically nulls when
++        // the control socket goes away. An explicit tray click cancels a
++        // pending reply and answers with the minimize fallback.
++        QPointer<QLocalSocket> mPendingCloseReply;
++        QTimer mPendingCloseRetryTimer;
++        int mPendingCloseAttempts = 0;
+ 
+         // System tray context menu. Once set, it remains there, so we have to modify existing one
+         QMenu       *   mSystrayMenu;
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index 1d2a65f..c2096fc 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -16,6 +16,7 @@ set(TESTS
+         src/test_utils.cpp
+         src/test_windowtools_x11_state.cpp
+         src/test_quit_authorization.cpp
++        src/test_hide_retry_policy.cpp
+         )
+ 
+ add_executable(tests src/TestResources.cpp src/TestResources.h ${TESTS})
+diff --git a/tests/src/test_hide_retry_policy.cpp b/tests/src/test_hide_retry_policy.cpp
+new file mode 100644
+index 0000000..c648a8e
+--- /dev/null
++++ b/tests/src/test_hide_retry_policy.cpp
+@@ -0,0 +1,35 @@
++#include <gtest/gtest.h>
++
++#include "hide_retry_policy.h"
++
++TEST(HideRetryPolicy, ConfirmedImmediate)
++{
++    EXPECT_EQ(HideRetryPolicy::Step::Hidden, HideRetryPolicy::evaluate(1, true));
++}
++
++TEST(HideRetryPolicy, ConfirmedLateStillWins)
++{
++    EXPECT_EQ(HideRetryPolicy::Step::Hidden,
++              HideRetryPolicy::evaluate(HideRetryPolicy::maxAttempts, true));
++}
++
++TEST(HideRetryPolicy, RetriesInsideBudget)
++{
++    for (int attempt = 1; attempt < HideRetryPolicy::maxAttempts; ++attempt)
++    {
++        EXPECT_EQ(HideRetryPolicy::Step::Retry, HideRetryPolicy::evaluate(attempt, false));
++    }
++}
++
++TEST(HideRetryPolicy, ExhaustsAtLimit)
++{
++    EXPECT_EQ(HideRetryPolicy::Step::Exhausted,
++              HideRetryPolicy::evaluate(HideRetryPolicy::maxAttempts, false));
++}
++
++TEST(HideRetryPolicy, BudgetIsBounded)
++{
++    EXPECT_EQ(HideRetryPolicy::maxAttempts * HideRetryPolicy::attemptSpacingMs,
++              HideRetryPolicy::totalBudgetMs());
++    EXPECT_EQ(1250, HideRetryPolicy::totalBudgetMs());
++}

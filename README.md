@@ -27,12 +27,14 @@ All helper changes are recorded as reviewable patch files under
 | **One-shot quit authorization** | an ✕ click may only *exit* Thunderbird when a human explicitly chose *Quit Thunderbird* from the tray menu; this removed upstream birdtray's stale 15-second "allow-close" window as the only gate | `patches/helper-delta.patch` |
 | **`skipSwitcher` added to the tray-hide script** | a tray-hidden window also disappears from **Alt+Tab** and from the **Meta+W** overview, not just from the taskbar; restore clears all four flags | `patches/skip-switcher.patch` |
 | Helper auto-start (on demand, one-shot spawn) | Thunderbird starting without the helper can request it over native messaging; the helper then exists for tray interactions | `patches/helper-delta.patch` |
+| **Confirmed-hide retry** for close requests | the helper holds its answer until the hide script confirms success; a miss retries for up to ~1.25 s; an explicit tray click cancels pending hiding and shows the window. Closes the once-observed cold-start *minimize* fallback | `patches/confirmed-hide-retry.patch` |
 
-The two patch files are derived directly from the commits and are the
-complete reviewable delta: `patches/helper-delta.patch` is the full helper
-change against upstream `master` (revision `2ac2016`), and
-`patches/skip-switcher.patch` is the incremental delta applying on top of
-it. Applying both, in that order, to a pristine upstream checkout
+The patch files are derived directly from the commits and are the complete
+reviewable delta: `patches/helper-delta.patch` is the full helper change
+against upstream `master` (revision `2ac2016`), `patches/skip-switcher.patch`
+is the incremental delta applying on top of it, and
+`patches/confirmed-hide-retry.patch` is the incremental delta applying on top
+of that. Applying all three, in that order, to a pristine upstream checkout
 reproduces the helper code committed here.
 | **Thunderbird add-on** in `extension/` | the ✕ click needs to be intercepted inside Thunderbird — done by forking Dirk Steinmetz's maintained *Minimize on Close* add-on | see [The Thunderbird add-on](#the-thunderbird-add-on) |
 | Deployment kit in `deployment/` + `install.sh` / `uninstall.sh` | reproducible per-user install with `$HOME` templates | n/a (new files) |
@@ -45,7 +47,11 @@ reproduces the helper code committed here.
 2. The helper asks **KWin** (via its scripting interface) to hide the window with
    *four* flags at once: `minimized`, `skipTaskbar`, `skipPager` and `skipSwitcher`.
    That is why a hidden Thunderbird is absent from the taskbar, Alt+Tab *and* the
-   Meta+W overview. The helper replies `hidden` to the add-on.
+   Meta+W overview. The helper replies `hidden` to the add-on — but only once
+   KWin *confirmed* the hide (the script verifies the flags and calls back).
+   A miss (possible in the moments right after startup) retries for up to ~1.25 s
+   before falling back, and an explicit tray click always wins by showing the
+   window instead.
 3. Clicking the tray icon (or choosing *Show Thunderbird*) asks KWin to clear all
    four flags — the window reappears exactly as it was.
 4. **Quit Thunderbird** in the tray menu grants a one-shot close authorization and
@@ -97,13 +103,17 @@ compatibility beyond the tested matrix.
    when Thunderbird is not actually running. Window-based actions (hide/show/
    quit) are unaffected in practice because they additionally require a real
    Thunderbird *window* found through KWin.
-2. **Cold-start race (once observed, not reproduced).** If the helper starts up
-   at the very moment Thunderbird is showing its first window, one ✕ click was
-   observed to fall back to a plain *taskbar* minimize instead of tray-hide.
-   Thunderbird was never at risk; a single tray click restored the window
-   normally. Diagnosed, understood (single-shot fallback, no retry), and
-   deliberately left unfixed until it ever recurs — a retry-around-hide fix is
-   designed but gated on a real reproduction.
+2. **Cold-start race — fixed on `master`.** If the helper starts up at the very
+   moment Thunderbird is showing its first window, one ✕ click was observed to
+   fall back to a plain *taskbar* minimize instead of tray-hide (once, on
+   2026-10-19; it was never at risk). The helper now only believes a hide that
+   KWin confirmed, retries for a bounded ~1.25 s window, treats an explicit
+   tray click as *show me the window*, and only then falls back to the
+   minimize — see `patches/confirmed-hide-retry.patch`. An independently
+   developed fork ([vegiii/birdtray-lite](https://github.com/vegiii/birdtray-lite))
+   ran into the same race class and implemented the same pattern; the approach
+   is credited there. The fix is **not** part of the `tb158-v1` release, which
+   was cut before it.
 3. **KWin-specific.** Hiding/restoring uses KWin's DBus scripting interface
    (`qdbus6`). On GNOME or other compositors this will not work; nobody has
    tested it.
@@ -225,6 +235,17 @@ Install it via Thunderbird's **Add-ons Manager → ⚙ → Install Add-on From F
 * **Rollback per feature:** every helper delta lives in one patch under
   `patches/`; revert the feature by reverting the commit / patch and
   rebuilding.
+
+## Related projects
+
+* [vegiii/birdtray-lite](https://github.com/vegiii/birdtray-lite) — a sibling
+  fork created a few days before this one, from the same parent
+  (stark1tty/birdtray-wayland): a leaner, monitoring-first personal build for
+  Fedora KDE that hides the window when it is *minimized*, with no add-on and
+  no ✕-close interception. Its independently implemented
+  confirm-the-hide-before-believing-it approach inspired this fork's
+  cold-start retry fix (see [Known limitations](#known-limitations)); no code
+  was copied.
 
 ## Licence and attribution
 

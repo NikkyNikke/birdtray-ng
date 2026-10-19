@@ -17,6 +17,12 @@ Lineage:
   based on that fork's `master` (revision `2ac2016`, 2026-04-15) with the
   changes listed in the README's "What this fork changes" table, recorded in
   `patches/`.
+* **birdtray-lite** — vegiii's fork
+  ([vegiii/birdtray-lite](https://github.com/vegiii/birdtray-lite)), a sibling
+  fork of the same parent. Not part of this codebase; its independently
+  implemented confirm-then-retry approach to hiding inspired the
+  confirmed-hide retry fix here (`patches/confirmed-hide-retry.patch`). No
+  code was taken from it.
 
 ## 2. The Thunderbird add-on (`extension/`)
 
