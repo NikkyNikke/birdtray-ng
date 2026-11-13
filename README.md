@@ -2,7 +2,7 @@
 
 [![Licence](https://img.shields.io/github/license/NikkyNikke/birdtray-ng)](LICENSE.txt)
 [![Latest release](https://img.shields.io/github/v/release/NikkyNikke/birdtray-ng)](https://github.com/NikkyNikke/birdtray-ng/releases)
-![Thunderbird — declared 128.0–158.\*, tested 158.0.1](https://img.shields.io/badge/thunderbird-declared_128.0%E2%80%93158.%2A_%C2%B7_tested_158.0.1-informational)
+![Thunderbird — declared 128.0+, tested 159.0](https://img.shields.io/badge/thunderbird-declared_128.0%2B_%C2%B7_tested_159.0-informational)
 ![KDE Plasma on Wayland (KWin)](https://img.shields.io/badge/desktop-KDE_Plasma_on_Wayland_%28KWin%29-informational)
 
 **Birdtray NG** is a community continuation of
@@ -12,7 +12,7 @@ Birdtray project and not affiliated with either upstream** — the lineage and c
 preserved in full in [`NOTICE.md`](NOTICE.md).
 
 > Birdtray NG focuses on a *real* close-to-tray experience: clicking the message window's ✕
-> hides a natively installed Thunderbird (128–158) to the KWin tray — with the tray icon
+> hides a natively installed Thunderbird (128+) to the KWin tray — with the tray icon
 > bringing it back — while the natural ways of quitting Thunderbird keep working. The upstream
 > project targets X11 (and, in stark1tty's fork, Flatpak Thunderbird on Wayland).
 >
@@ -59,7 +59,7 @@ preserved in full in [`NOTICE.md`](NOTICE.md).
    **The add-on ID must match the helper's allowlist.** The install writes
    `~/.mozilla/native-messaging-hosts/com.ulduzsoft.birdtray.json`, which allowlists
    exactly `birdtray-close@nikky.st` — the ID the published XPI declares in its manifest
-   (`applications.gecko.id`, range 128.0–158.\*). A differently-IDed add-on build is
+   (`applications.gecko.id`, declared Thunderbird 128.0+). A differently-IDed add-on build is
    refused by Thunderbird, and every ✕ then falls back to a plain taskbar minimize
    (verified behaviour); the fix is to add that ID to the manifest's
    `allowed_extensions` — see [The Thunderbird add-on](#the-thunderbird-add-on).
@@ -67,7 +67,7 @@ preserved in full in [`NOTICE.md`](NOTICE.md).
 3. **Start the helper:** `~/.local/opt/birdtray-wayland/launch-birdtray &`
 
 Then click ✕ on Thunderbird: the window hides to the tray, and the tray icon brings it
-back. Tested on KDE Plasma + KWin on Wayland with Thunderbird 158.0.1; other desktops
+back. Tested on KDE Plasma + KWin on Wayland with Thunderbird 159.0; other desktops
 are untested — see [Tested environment](#tested-environment).
 
 ## What this fork changes
@@ -136,7 +136,11 @@ Two distinct quits, two different results — that separation is the point.
 Everything below was **actually exercised live**, repeatedly:
 
 * CachyOS (Arch Linux), KDE Plasma on **Wayland**, KWin compositor
-* Thunderbird **158.0.1**, natively installed (pacman), single profile
+* Thunderbird natively installed (pacman), single profile — the full matrix
+  was exercised on **158.0.1**; on **159.0** the add-on's automatic re-enable
+  after the series update and the close → hide → tray-restore cycle (hide
+  signature: minimized + skipTaskbar/skipSwitcher/skipPager) were re-verified
+  live
 * Birdtray helper built with gcc + Qt 6
 * The close → hide → tray-restore cycle, the minimize ⇄ taskbar behaviour,
   both quit paths, Alt+Tab/Meta+W exclusion in both directions, helper
@@ -181,8 +185,9 @@ compatibility beyond the tested matrix.
    *without* weakening `xpinstall` security preferences. See the add-on section.
 6. **No auto-update channel.** The XPI has no update URL; update by downloading
    a new release manually.
-7. **Version range 128.0–158.\*.** Declared in the manifest; actually tested
-   only on 158.0.1.
+7. **Declared range 128.0+, open-ended.** The manifest pins only
+   `strict_min_version: 128.0` and declares no upper bound; every Thunderbird
+   release above the tested one (currently 159.0) is untested.
 
 ## Dependencies
 
@@ -191,7 +196,7 @@ Core, Gui, Widgets, Network, DBus, Svg, and Qt6LinguistTools (`lrelease`).
 GTest/GMock for the test suite.
 
 **Runtime:** KDE Plasma (a StatusNotifierItem-capable system tray + KWin),
-`qdbus6` (from `qt6-tools` on Arch), and for the add-on: Thunderbird 128–158.
+`qdbus6` (from `qt6-tools` on Arch), and for the add-on: Thunderbird 128+.
 
 ## Build the helper
 
@@ -238,14 +243,15 @@ settings never collide with other applications'. Notable settings there
 
 `extension/` contains the add-on, and `artifacts/` a built XPI:
 
-`minimize-on-close-birdtray-wayland-158-2.0.3.2-public.xpi`
-(SHA-256 `69b580b05b3792477663b44b359e19efb7e8c714829b8945c99c49a99c8e2fec`;
+`minimize-on-close-birdtray-wayland-2.0.3.3-public.xpi`
+(SHA-256 `0187804a06329417bb28bf8f7aaf5c3b0775c76261650133130bb8510de85e1a`;
 reproducible — `scripts/build_public_xpi.py` packs from `extension/` with fixed
 timestamps).
 
 Install it via Thunderbird's **Add-ons Manager → ⚙ → Install Add-on From File…**
 
-* ID: `birdtray-close@nikky.st`, compatibility 128.0–158.\*
+* ID: `birdtray-close@nikky.st`, compatibility 128.0+, display name
+  *Minimize on Close — Birdtray NG*
 * It is a fork of Dirk Steinmetz's *Minimize on Close*
   ([upstream](https://github.com/rsjtdrjgfuzkfg/thunderbird-minimizeonclose),
   `minimizeonclose@rsjtdrjgfuzkfg.com`, MPL-2.0) — see [`NOTICE.md`](NOTICE.md)
@@ -254,7 +260,7 @@ Install it via Thunderbird's **Add-ons Manager → ⚙ → Install Add-on From F
   modification notices.
 * **Unsigned, on purpose.** Community add-ons like this one are not signed by
   Mozilla — a Thunderbird team member has stated plainly that Mozilla does not
-  sign add-ons. Thunderbird 158 does not verify sideloaded XPI signatures, so
+  sign add-ons. Thunderbird does not verify sideloaded XPI signatures, so
   the add-on installs normally; there is no need to disable signature
   enforcement (`xpinstall.*` stays untouched), and no such workaround is
   recommended by this project.
